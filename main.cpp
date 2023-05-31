@@ -65,7 +65,7 @@ struct Vec3 {
         return std::sqrt(x * x + y * y + z * z);
     }
 
-    friend double distance(const Vec3 &left, const Vec3 &right) {
+    static double distance(const Vec3 &left, const Vec3 &right) {
         return (left - right).length();
     }
 
@@ -201,8 +201,8 @@ struct Ray {
                 return {point, {255, 255, 255}};
             }
 
-            double t1 = (-b + sqrt(discriminant)) / 2 * a;
-            double t2 = (-b - sqrt(discriminant)) / 2 * a;
+            double t1 = (-b + sqrt(discriminant)) / (2 * a);
+            double t2 = (-b - sqrt(discriminant)) / (2 * a);
 
             double t;
             if (t2 > 0) {
@@ -280,13 +280,17 @@ struct Ray {
                     Point point_on_plane = {point.x + d * direction.x, point.y + d * direction.y,
                                             point.z + d * direction.z};
                     double area =
-                            distance(p1, p2) * distance(p2, p3) * distance(p3, p1) / (4 * distance(normal, {0, 0, 0}));
-                    double area1 = distance(point_on_plane, p1) * distance(p1, p2) * distance(p2, point_on_plane) /
-                                   (4 * distance(normal, {0, 0, 0}));
-                    double area2 = distance(point_on_plane, p2) * distance(p2, p3) * distance(p3, point_on_plane) /
-                                   (4 * distance(normal, {0, 0, 0}));
-                    double area3 = distance(point_on_plane, p3) * distance(p3, p1) * distance(p1, point_on_plane) /
-                                   (4 * distance(normal, {0, 0, 0}));
+                            Vec3::distance(p1, p2) * Vec3::distance(p2, p3) * Vec3::distance(p3, p1) /
+                            (4 * Vec3::distance(normal, {0, 0, 0}));
+                    double area1 = Vec3::distance(point_on_plane, p1) * Vec3::distance(p1, p2) *
+                                   Vec3::distance(p2, point_on_plane) /
+                                   (4 * Vec3::distance(normal, {0, 0, 0}));
+                    double area2 = Vec3::distance(point_on_plane, p2) * Vec3::distance(p2, p3) *
+                                   Vec3::distance(p3, point_on_plane) /
+                                   (4 * Vec3::distance(normal, {0, 0, 0}));
+                    double area3 = Vec3::distance(point_on_plane, p3) * Vec3::distance(p3, p1) *
+                                   Vec3::distance(p1, point_on_plane) /
+                                   (4 * Vec3::distance(normal, {0, 0, 0}));
                     if (std::abs(area - area1 - area2 - area3) <= 1e-6) {
                         intersection_point = point_on_plane;
                         t = d;
@@ -305,11 +309,18 @@ struct Ray {
 };
 
 struct Image {
-    size_t height, width;
+    int height, width;
     sf::VertexArray matrix;
 
-    Image(size_t height, size_t width) : height(height), width(width) {
-        matrix.resize(height * width);
+    Image(int height, int width) : height(height), width(width), matrix({}) {
+        for (int i = 0; i < height; ++i) {
+            for (int j = 0; j < width; ++j) {
+                sf::Vertex v{};
+                v.position = {(float) i, (float) j};
+                v.color = sf::Color::White;
+                matrix.append(v);
+            }
+        }
     }
 
     sf::Vertex &operator[](size_t i, size_t j) {
@@ -327,12 +338,14 @@ int main(int argc, char **argv) {
     double a0;
     double a1;
     double alpha;
-    size_t width;
-    size_t height;
+    int width;
+    int height;
     Vec3 light_source{};
     {
         std::ifstream in(render_space_file);
         in >> camera >> norm >> up >> a0 >> a1 >> alpha >> width >> height >> light_source;
+        norm = norm.normalized();
+        up = up.normalized();
     }
     std::vector<Figure *> figures;
     {
@@ -361,9 +374,38 @@ int main(int argc, char **argv) {
             }
         }
     }
-    sf::RenderWindow window(sf::VideoMode(DEFAULT_PICTURE_WIDTH, DEFAULT_PICTURE_HEIGHT), "Rendered picture");
-    /* main stuff */
+    sf::RenderWindow window(sf::VideoMode(width, height), "Rendered picture");
     Image image{height, width};
+    double pixel_size = a0 * tan(alpha / 2) * 2 / height;
+    double actual_height = height * pixel_size;
+    double actual_width = width * pixel_size;
+    Point start_point = camera + norm * a0;
+    Vec3 tmp = Vec3::cross(norm, up).normalized();
+    up = -up;
+    start_point = start_point - up * actual_height / 2 - tmp * actual_width / 2;
+    for (int i = 0; i < height; ++i) {
+        for (int j = 0; j < width; ++j) {
+            Point current_point = start_point + Vec3(pixel_size / 2) + tmp * pixel_size * j + up * pixel_size * i;
+            Ray r{camera, (current_point - camera).normalized()};
+            Point image_point = camera;
+            Color pixel_color{255, 255, 255};
+            for (auto &elem: figures) {
+                auto p = r.intersect(elem, light_source);
+                if (p.first == camera || Vec3::distance(camera, p.first) < a0 ||
+                    Vec3::distance(camera, p.first) > a0 + a1) {
+                    continue;
+                }
+                if (image_point == camera) {
+                    image_point = p.first;
+                    pixel_color = p.second;
+                } else if (Vec3::distance(image_point, camera) > Vec3::distance(p.first, camera)) {
+                    image_point = p.first;
+                    pixel_color = p.second;
+                }
+            }
+            image[i, j].color = sf::Color(pixel_color.r, pixel_color.g, pixel_color.b);
+        }
+    }
     while (window.isOpen()) {
         sf::Event event{};
         while (window.pollEvent(event)) {
@@ -373,7 +415,9 @@ int main(int argc, char **argv) {
         }
         window.draw(image.matrix);
         window.display();
+        sf::Image().saveToFile("out.bmp");
+        sf::sleep(sf::seconds(3));
     }
-    /* save window to image*/
+    // save window to image
     return 0;
 }
