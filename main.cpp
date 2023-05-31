@@ -2,7 +2,9 @@
 #include <iostream>
 #include <fstream>
 #include <vector>
+#include <array>
 #include <SFML/Graphics.hpp>
+#include <limits>
 
 enum {
     DEFAULT_PICTURE_WIDTH = 800,
@@ -18,7 +20,7 @@ struct Vec3 {
 
     Vec3(double x, double y, double z) : x(x), y(y), z(z) {}
 
-    explicit Vec3(double value) : x(value), y(value), z(value) {}
+    Vec3(double value) : x(value), y(value), z(value) {}
 
     static double dot(Vec3 left, Vec3 right) {
         return left.x * right.x + left.y * right.y + left.z * right.z;
@@ -63,8 +65,29 @@ struct Vec3 {
         return std::sqrt(x * x + y * y + z * z);
     }
 
-    friend double distance(Vec3 left, Vec3 right) {
+    friend double distance(const Vec3 &left, const Vec3 &right) {
         return (left - right).length();
+    }
+
+    [[nodiscard]] Vec3 normalized() const {
+        return *this / length();
+    }
+
+    bool operator==(const Vec3 &other) const {
+        if (std::abs(x - other.x) > 1e-6) {
+            return false;
+        }
+        if (std::abs(y - other.y) > 1e-6) {
+            return false;
+        }
+        if (std::abs(z - other.z) > 1e-6) {
+            return false;
+        }
+        return true;
+    }
+
+    bool operator!=(const Vec3 &other) const {
+        return !(*this == other);
     }
 };
 
@@ -79,7 +102,7 @@ struct Color {
 
     Color(double x, double y, double z) : r(x), g(y), b(z) {}
 
-    explicit Color(double value) : r(value), g(value), b(value) {}
+    Color(double value) : r(value), g(value), b(value) {}
 
 
     Color &operator=(const Color &other) = default;
@@ -119,11 +142,17 @@ struct Figure {
     explicit Figure(Color c) : c(c) {}
 
     virtual ~Figure() = default;
+
+    Color color() {
+        return c;
+    }
 };
 
 struct Sphere : public Figure {
     Vec3 center;
     double radius;
+
+    using Figure::color;
 
     Sphere(Color c, Vec3 center, double radius) : Figure(c), center(center), radius(radius) {}
 };
@@ -134,6 +163,8 @@ struct Box : public Figure {
     double b;
     double c;
 
+    using Figure::color;
+
     Box(Color color, Vec3 point, double a, double b, double c) : Figure(color), point(point), a(a), b(b), c(c) {}
 };
 
@@ -143,29 +174,10 @@ struct Tetrahedron : public Figure {
     Vec3 c;
     Vec3 d;
 
+    using Figure::color;
+
     Tetrahedron(Color color, Vec3 a, Vec3 b, Vec3 c, Vec3 d) : Figure(color), a(a), b(b), c(c), d(d) {}
-
-    [[nodiscard]] bool contains(Vec3 p) const {
-        Vec3 v0 = {a.x - d.x, a.y - d.y, a.z - d.z};
-        Vec3 v1 = {b.x - d.x, b.y - d.y, b.z - d.z};
-        Vec3 v2 = {c.x - d.x, c.y - d.y, c.z - d.z};
-        Vec3 n = Vec3::cross(v1, v0);
-        double dot = Vec3::dot(n, v2);
-        if (dot == 0) {
-            return false;
-        }
-        double inv_dot = 1.0 / dot;
-        Vec3 w = {p.x - d.x, p.y - d.y, p.z - d.z};
-        double u = Vec3::dot(Vec3::cross(v1, v2), w) * inv_dot;
-        double v = Vec3::dot(Vec3::cross(v0, v2), w) * inv_dot;
-        double t1 = Vec3::dot(Vec3::cross(v0, v1), w) * inv_dot;
-        if (u < 0 || v < 0 || t1 < 0 || u + v + t1 > 1) {
-            return false;
-        }
-        return true;
-    }
 };
-
 
 struct Ray {
     Vec3 point;
@@ -173,18 +185,120 @@ struct Ray {
 
     Ray(Vec3 point, Vec3 direction) : point(point), direction(direction) {}
 
-    Vec3 intersect(const Figure *fig) const {
+    std::pair<Point, Color> intersect(const Figure *fig, Vec3 light_source) const {
         auto *s_p = dynamic_cast<const Sphere *>(fig);
         if (s_p != nullptr) {
-            /* sphere intersection */
+            Sphere s = *s_p;
+            double a = pow(direction.x, 2) + pow(direction.y, 2) + pow(direction.z, 2);
+            double b = 2 * (direction.x * (point.x - s.center.x) + direction.y * (point.y - s.center.y) +
+                            direction.z * (point.z - s.center.z));
+            double c = pow(point.x - s.center.x, 2) + pow(point.y - s.center.y, 2) + pow(point.z - s.center.z, 2) -
+                       pow(s.radius, 2);
+
+            double discriminant = pow(b, 2) - 4 * a * c;
+
+            if (discriminant < 0) {
+                return {point, {255, 255, 255}};
+            }
+
+            double t1 = (-b + sqrt(discriminant)) / 2 * a;
+            double t2 = (-b - sqrt(discriminant)) / 2 * a;
+
+            double t;
+            if (t2 > 0) {
+                t = t2;
+            } else if (t2 <= 0 && t1 > 0) {
+                t = t1;
+            } else {
+                return {point, {255, 255, 255}};
+            }
+            if (std::abs(t) < 1e-6) {
+                return {point, {255, 255, 255}};
+            }
+            Point intersection_point = {
+                    point.x + t * direction.x,
+                    point.y + t * direction.y,
+                    point.z + t * direction.z
+            };
+
+            return {intersection_point, s.color() * Vec3::dot((light_source - intersection_point).normalized(),
+                                                              (intersection_point - s.center).normalized())};
         }
         auto *b_p = dynamic_cast<const Box *>(fig);
         if (b_p != nullptr) {
-            /* box intersection */
+            Box b = *b_p;
+            double tmin = std::numeric_limits<double>::min();
+            double tmax = std::numeric_limits<double>::max();
+
+            if (direction.x != 0) {
+                double tx1 = (b.point.x - point.x) / direction.x;
+                double tx2 = (b.point.x + b.a - point.x) / direction.x;
+                tmin = std::max(tmin, std::min(tx1, tx2));
+                tmax = std::min(tmax, std::max(tx1, tx2));
+            }
+
+            if (direction.y != 0) {
+                double ty1 = (b.point.y - point.y) / direction.y;
+                double ty2 = (b.point.y + b.b - point.y) / direction.y;
+                tmin = std::max(tmin, std::min(ty1, ty2));
+                tmax = std::min(tmax, std::max(ty1, ty2));
+            }
+
+            if (direction.z != 0) {
+                double tz1 = (b.point.z - point.z) / direction.z;
+                double tz2 = (b.point.z + b.c - point.z) / direction.z;
+                tmin = std::max(tmin, std::min(tz1, tz2));
+                tmax = std::min(tmax, std::max(tz1, tz2));
+            }
+
+            if (tmax >= tmin && tmax >= 0) {
+                Point intersectionPoint = {
+                        point.x + tmin * direction.x,
+                        point.y + tmin * direction.y,
+                        point.z + tmin * direction.z
+                };
+                return {intersectionPoint, b.color()};
+            }
+            return {point, {255, 255, 255}};
         }
         auto *t_p = dynamic_cast<const Tetrahedron *>(fig);
         if (t_p != nullptr) {
-            /* tetra intersection */
+            auto tetrahedron = *t_p;
+            Point intersection_point;
+            double t = -1;
+            std::array<Point, 4> points = {tetrahedron.a, tetrahedron.b, tetrahedron.c, tetrahedron.d};
+            Vec3 n{};
+            for (int i = 0; i < 4; i++) {
+                Point p1 = points[i];
+                Point p2 = points[(i + 1) % 4];
+                Point p3 = points[(i + 2) % 4];
+                Point normal = Vec3::cross({p2.x - p1.x, p2.y - p1.y, p2.z - p1.z},
+                                           {p3.x - p1.x, p3.y - p1.y, p3.z - p1.z});
+                double d = Vec3::dot(normal, {p1.x - point.x, p1.y - point.y, p1.z - point.z}) /
+                           Vec3::dot(normal, direction);
+                if (d > 0 && (t < 0 || d < t)) {
+                    Point point_on_plane = {point.x + d * direction.x, point.y + d * direction.y,
+                                            point.z + d * direction.z};
+                    double area =
+                            distance(p1, p2) * distance(p2, p3) * distance(p3, p1) / (4 * distance(normal, {0, 0, 0}));
+                    double area1 = distance(point_on_plane, p1) * distance(p1, p2) * distance(p2, point_on_plane) /
+                                   (4 * distance(normal, {0, 0, 0}));
+                    double area2 = distance(point_on_plane, p2) * distance(p2, p3) * distance(p3, point_on_plane) /
+                                   (4 * distance(normal, {0, 0, 0}));
+                    double area3 = distance(point_on_plane, p3) * distance(p3, p1) * distance(p1, point_on_plane) /
+                                   (4 * distance(normal, {0, 0, 0}));
+                    if (std::abs(area - area1 - area2 - area3) <= 1e-6) {
+                        intersection_point = point_on_plane;
+                        t = d;
+                    }
+                    n = normal;
+                }
+            }
+            if (intersection_point == point) {
+                return {point, {255, 255, 255}};
+            }
+            return {intersection_point,
+                    tetrahedron.color() * Vec3::dot((light_source - intersection_point).normalized(), n.normalized())};
         }
         throw "Invalid figure type";
     }
@@ -202,6 +316,7 @@ struct Image {
         return matrix[i * width + j];
     }
 };
+
 
 int main(int argc, char **argv) {
     char *render_space_file = argv[1];
