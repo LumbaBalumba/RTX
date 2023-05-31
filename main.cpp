@@ -1,4 +1,3 @@
-#include <limits>
 #include <cmath>
 #include <iostream>
 #include <fstream>
@@ -19,7 +18,7 @@ struct Vec3 {
 
     Vec3(double x, double y, double z) : x(x), y(y), z(z) {}
 
-    Vec3(double value) : x(value), y(value), z(value) {}
+    explicit Vec3(double value) : x(value), y(value), z(value) {}
 
     static double dot(Vec3 left, Vec3 right) {
         return left.x * right.x + left.y * right.y + left.z * right.z;
@@ -80,7 +79,7 @@ struct Color {
 
     Color(double x, double y, double z) : r(x), g(y), b(z) {}
 
-    Color(double value) : r(value), g(value), b(value) {}
+    explicit Color(double value) : r(value), g(value), b(value) {}
 
 
     Color &operator=(const Color &other) = default;
@@ -117,7 +116,7 @@ struct Color {
 struct Figure {
     Color c;
 
-    Figure(Color c) : c(c) {}
+    explicit Figure(Color c) : c(c) {}
 
     virtual ~Figure() = default;
 };
@@ -177,15 +176,15 @@ struct Ray {
     Vec3 intersect(const Figure *fig) const {
         auto *s_p = dynamic_cast<const Sphere *>(fig);
         if (s_p != nullptr) {
-
+            /* sphere intersection */
         }
         auto *b_p = dynamic_cast<const Box *>(fig);
         if (b_p != nullptr) {
-
+            /* box intersection */
         }
         auto *t_p = dynamic_cast<const Tetrahedron *>(fig);
         if (t_p != nullptr) {
-
+            /* tetra intersection */
         }
         throw "Invalid figure type";
     }
