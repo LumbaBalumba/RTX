@@ -396,6 +396,7 @@ int main(int argc, char **argv) {
     Vec3 tmp = Vec3::cross(norm, up).normalized();
     up = -up;
     start_point = start_point - up * actual_height / 2 - tmp * actual_width / 2;
+#pragma opm parallel for
     for (int i = 0; i < width; ++i) {
         for (int j = 0; j < height; ++j) {
             Point current_point = start_point + Vec3(pixel_size / 2) + tmp * pixel_size * i + up * pixel_size * j;
@@ -408,9 +409,12 @@ int main(int argc, char **argv) {
                     Vec3::distance(camera, p.first) > a0 + a1) {
                     continue;
                 }
-                if (image_point == camera || Vec3::distance(image_point, camera) > Vec3::distance(p.first, camera)) {
-                    image_point = p.first;
-                    pixel_color = p.second;
+                {
+                    if (image_point == camera ||
+                        Vec3::distance(image_point, camera) > Vec3::distance(p.first, camera)) {
+                        image_point = p.first;
+                        pixel_color = p.second;
+                    }
                 }
             }
             sf::Vertex v{};
