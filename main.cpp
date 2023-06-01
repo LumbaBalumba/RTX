@@ -177,8 +177,9 @@ struct Box : public Figure {
     Box(Color color, Vec3 point, double a, double b, double c) : Figure(color), point(point), a(a), b(b), c(c) {}
 
     [[nodiscard]] bool contains(Point p) const {
-        return p.x >= point.x && p.x <= point.x + a && p.y >= point.y && p.y <= point.y + b && p.z >= point.z &&
-               p.z <= point.z + c;
+        return p.x >= point.x - 1e-6 && p.x <= point.x + a + 1e-6 && p.y >= point.y - 1e-6 &&
+               p.y <= point.y + b + 1e-6 && p.z >= point.z - 1e-6 &&
+               p.z <= point.z + c + 1e-6;
     }
 };
 
@@ -323,7 +324,7 @@ struct Ray {
                 }
             }
             if (params.empty()) {
-                return {point, {255, 255, 255}};
+                return {point, {255, 225, 255}};
             }
             std::sort(params.begin(), params.end());
             double t = params[0];
@@ -342,7 +343,8 @@ struct Ray {
             } else if (std::abs(ref_point.z - b.point.z - b.c) < 1e-6) {
                 norm = {0, 0, 1};
             }
-            return {ref_point, b.color() * Vec3::dot(norm, (light_source - ref_point).normalized())};
+            //return {ref_point, b.color()};
+            return {ref_point, b.color() * Vec3::dot(norm.normalized(), (light_source - ref_point).normalized())};
         }
         auto *t_p = dynamic_cast<const Tetrahedron *>(fig);
         if (t_p != nullptr) {
@@ -449,16 +451,13 @@ int main(int argc, char **argv) {
             Color pixel_color{255, 255, 255};
             for (auto &elem: figures) {
                 auto p = r.intersect(elem, light_source);
-                if (p.first == camera || Vec3::distance(camera, p.first) < a0 ||
-                    Vec3::distance(camera, p.first) > a0 + a1) {
+                if (Vec3::distance(camera, p.first) < a0 || Vec3::distance(camera, p.first) > a0 + a1) {
                     continue;
                 }
-                {
-                    if (image_point == camera ||
-                        Vec3::distance(image_point, camera) > Vec3::distance(p.first, camera)) {
-                        image_point = p.first;
-                        pixel_color = p.second;
-                    }
+                if (image_point == camera ||
+                    Vec3::distance(image_point, camera) > Vec3::distance(p.first, camera)) {
+                    image_point = p.first;
+                    pixel_color = p.second;
                 }
             }
             sf::Vertex v{};
