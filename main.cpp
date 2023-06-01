@@ -6,6 +6,7 @@
 #include <SFML/Graphics.hpp>
 #include <limits>
 #include <omp.h>
+#include <algorithm>
 
 /*
 Аргументы запуска программы - файл с описанием 3D-пространства, файл с описанием фигур, название выходного файла.
@@ -118,7 +119,9 @@ struct Color {
     }
 
     friend Color operator*(Color left, Color right) {
-        return {std::max(left.r * right.r, 0.0), std::max(left.g * right.g, 0.0), std::max(left.b * right.b, 0.0)};
+        return {std::min(255.0, std::max(left.r * right.r, 0.0)),
+                std::min(255.0, std::max(left.g * right.g, 0.0)),
+                std::min(255.0, std::max(left.b * right.b, 0.0))};
     }
 
     Color operator-() const {
@@ -172,6 +175,11 @@ struct Box : public Figure {
     using Figure::color;
 
     Box(Color color, Vec3 point, double a, double b, double c) : Figure(color), point(point), a(a), b(b), c(c) {}
+
+    [[nodiscard]] bool contains(Point p) const {
+        return p.x >= point.x && p.x <= point.x + a && p.y >= point.y && p.y <= point.y + b && p.z >= point.z &&
+               p.z <= point.z + c;
+    }
 };
 
 struct Tetrahedron : public Figure {
@@ -190,6 +198,47 @@ struct Ray {
     Vec3 direction;
 
     Ray(Vec3 point, Vec3 direction) : point(point), direction(direction) {}
+
+    [[nodiscard]] Point plane_intersection(Point a, Point b, Point c) const {
+        Vec3 normal = Vec3::cross(b - a, c - a);
+        double dot = Vec3::dot(direction, normal);
+        if (std::abs(dot) < 1e-6) {
+            return point;
+        }
+        Vec3 displacement = a - point;
+        double t = Vec3::dot(displacement, normal) / dot;
+        if (t < 0) {
+            return point;
+        }
+        return point + t * direction;
+    }
+
+    [[nodiscard]] Point triangle_intersection(Point a, Point b, Point c) const {
+        Point intersection_point = plane_intersection(a, b, c);
+        if (intersection_point == point) {
+            return point;
+        }
+        Vec3 edge1 = b - a;
+        Vec3 edge2 = c - a;
+        Vec3 norm = Vec3::cross(edge1, edge2);
+
+        Vec3 pa = a - intersection_point;
+        Vec3 pb = b - intersection_point;
+        Vec3 pc = c - intersection_point;
+
+        Vec3 ppa = Vec3::cross(pa, pb);
+        Vec3 ppb = Vec3::cross(pb, pc);
+        Vec3 ppc = Vec3::cross(pc, pa);
+
+        double p1 = Vec3::dot(norm, ppa);
+        double p2 = Vec3::dot(norm, ppb);
+        double p3 = Vec3::dot(norm, ppc);
+        if (p1 >= 0 && p2 >= 0 && p3 >= 0) {
+            return intersection_point;
+        } else {
+            return point;
+        }
+    }
 
     std::pair<Point, Color> intersect(const Figure *fig, Vec3 light_source) const {
         auto *s_p = dynamic_cast<const Sphere *>(fig);
@@ -233,97 +282,92 @@ struct Ray {
         auto *b_p = dynamic_cast<const Box *>(fig);
         if (b_p != nullptr) {
             Box b = *b_p;
-            double tmin = std::numeric_limits<double>::min();
-            double tmax = std::numeric_limits<double>::max();
-
-            if (direction.x != 0) {
-                double tx1 = (b.point.x - point.x) / direction.x;
-                double tx2 = (b.point.x + b.a - point.x) / direction.x;
-                tmin = std::max(tmin, std::min(tx1, tx2));
-                tmax = std::min(tmax, std::max(tx1, tx2));
-            }
-
-            if (direction.y != 0) {
-                double ty1 = (b.point.y - point.y) / direction.y;
-                double ty2 = (b.point.y + b.b - point.y) / direction.y;
-                tmin = std::max(tmin, std::min(ty1, ty2));
-                tmax = std::min(tmax, std::max(ty1, ty2));
-            }
-
-            if (direction.z != 0) {
-                double tz1 = (b.point.z - point.z) / direction.z;
-                double tz2 = (b.point.z + b.c - point.z) / direction.z;
-                tmin = std::max(tmin, std::min(tz1, tz2));
-                tmax = std::min(tmax, std::max(tz1, tz2));
-            }
-
-            if (tmax >= tmin && tmax >= 0) {
-                Point intersection_point = {
-                        point.x + tmin * direction.x,
-                        point.y + tmin * direction.y,
-                        point.z + tmin * direction.z
-                };
-                Vec3 normal{};
-                if (std::abs(intersection_point.x - b.point.x) < 1e-6) {
-                    normal = {-1, 0, 0};
-                } else if (std::abs(intersection_point.x - b.point.x - b.a) < 1e-6) {
-                    normal = {1, 0, 0};
-                } else if (std::abs(intersection_point.y - b.point.y) < 1e-6) {
-                    normal = {0, -1, 0};
-                } else if (std::abs(intersection_point.y - b.point.y - b.b) < 1e-6) {
-                    normal = {0, 1, 0};
-                } else if (std::abs(intersection_point.z - b.point.z) < 1e-6) {
-                    normal = {0, 0, -1};
-                } else if (std::abs(intersection_point.z - b.point.z - b.c) < 1e-6) {
-                    normal = {0, 0, 1};
+            std::vector<double> params;
+            double x1 = b.point.x, x2 = b.point.x + b.a;
+            double y1 = b.point.y, y2 = b.point.y + b.b;
+            double z1 = b.point.z, z2 = b.point.z + b.c;
+            if (std::abs(direction.x) >= 1e-6) {
+                double t = (x1 - point.x) / direction.x;
+                Point p = point + t * direction;
+                if (t > 0 && b.contains(p)) {
+                    params.push_back(t);
                 }
-                return {intersection_point,
-                        b.color() * Vec3::dot(normal, (light_source - intersection_point).normalized())};
+                t = (x2 - point.x) / direction.x;
+                p = point + t * direction;
+                if (t > 0 && b.contains(p)) {
+                    params.push_back(t);
+                }
             }
-            return {point, {255, 255, 255}};
+            if (std::abs(direction.y) >= 1e-6) {
+                double t = (y1 - point.y) / direction.y;
+                Point p = point + t * direction;
+                if (t > 0 && b.contains(p)) {
+                    params.push_back(t);
+                }
+                t = (y2 - point.y) / direction.y;
+                p = point + t * direction;
+                if (t > 0 && b.contains(p)) {
+                    params.push_back(t);
+                }
+            }
+            if (std::abs(direction.z) >= 1e-6) {
+                double t = (z1 - point.z) / direction.z;
+                Point p = point + t * direction;
+                if (t > 0 && b.contains(p)) {
+                    params.push_back(t);
+                }
+                t = (z2 - point.z) / direction.z;
+                p = point + t * direction;
+                if (t > 0 && b.contains(p)) {
+                    params.push_back(t);
+                }
+            }
+            if (params.empty()) {
+                return {point, {255, 255, 255}};
+            }
+            std::sort(params.begin(), params.end());
+            double t = params[0];
+            Point ref_point = point + t * direction;
+            Vec3 norm{};
+            if (std::abs(ref_point.x - b.point.x) < 1e-6) {
+                norm = {-1, 0, 0};
+            } else if (std::abs(ref_point.x - b.point.x - b.a) < 1e-6) {
+                norm = {1, 0, 0};
+            } else if (std::abs(ref_point.y - b.point.y) < 1e-6) {
+                norm = {0, -1, 0};
+            } else if (std::abs(ref_point.y - b.point.y - b.b) < 1e-6) {
+                norm = {0, 1, 0};
+            } else if (std::abs(ref_point.z - b.point.z) < 1e-6) {
+                norm = {0, 0, -1};
+            } else if (std::abs(ref_point.z - b.point.z - b.c) < 1e-6) {
+                norm = {0, 0, 1};
+            }
+            return {ref_point, b.color() * Vec3::dot(norm, (light_source - ref_point).normalized())};
         }
         auto *t_p = dynamic_cast<const Tetrahedron *>(fig);
         if (t_p != nullptr) {
-            auto tetrahedron = *t_p;
-            Point intersection_point;
-            double t = -1;
-            std::array<Point, 4> points = {tetrahedron.a, tetrahedron.b, tetrahedron.c, tetrahedron.d};
-            Vec3 n{};
-            for (int i = 0; i < 4; i++) {
-                Point p1 = points[i];
-                Point p2 = points[(i + 1) % 4];
-                Point p3 = points[(i + 2) % 4];
-                Point normal = Vec3::cross({p2.x - p1.x, p2.y - p1.y, p2.z - p1.z},
-                                           {p3.x - p1.x, p3.y - p1.y, p3.z - p1.z});
-                double d = Vec3::dot(normal, {p1.x - point.x, p1.y - point.y, p1.z - point.z}) /
-                           Vec3::dot(normal, direction);
-                if (d > 0 && (t < 0 || d < t)) {
-                    Point point_on_plane = {point.x + d * direction.x, point.y + d * direction.y,
-                                            point.z + d * direction.z};
-                    double area =
-                            Vec3::distance(p1, p2) * Vec3::distance(p2, p3) * Vec3::distance(p3, p1) /
-                            (4 * Vec3::distance(normal, {0, 0, 0}));
-                    double area1 = Vec3::distance(point_on_plane, p1) * Vec3::distance(p1, p2) *
-                                   Vec3::distance(p2, point_on_plane) /
-                                   (4 * Vec3::distance(normal, {0, 0, 0}));
-                    double area2 = Vec3::distance(point_on_plane, p2) * Vec3::distance(p2, p3) *
-                                   Vec3::distance(p3, point_on_plane) /
-                                   (4 * Vec3::distance(normal, {0, 0, 0}));
-                    double area3 = Vec3::distance(point_on_plane, p3) * Vec3::distance(p3, p1) *
-                                   Vec3::distance(p1, point_on_plane) /
-                                   (4 * Vec3::distance(normal, {0, 0, 0}));
-                    if (std::abs(area - area1 - area2 - area3) <= 1e-6) {
-                        intersection_point = point_on_plane;
-                        t = d;
-                    }
-                    n = normal;
+            auto t = *t_p;
+            Point intersection_point = point;
+            Color intersection_color = {255, 255, 255};
+            std::array<Point, 4> points = {t.a, t.b, t.c, t.d};
+            for (int i = 0; i < 4; ++i) {
+                Point point1 = points[i];
+                Point point2 = points[(i + 1) % 4];
+                Point point3 = points[(i + 2) % 4];
+                Point tmp = triangle_intersection(point1, point2, point3);
+                if (tmp == point) {
+                    continue;
+                } else if (intersection_point == point ||
+                           Vec3::distance(tmp, point) < Vec3::distance(intersection_point, point)) {
+                    Vec3 v1 = point2 - point1;
+                    Vec3 v2 = point3 - point1;
+                    Vec3 norm = Vec3::cross(v1, v2);
+                    intersection_point = tmp;
+                    intersection_color =
+                            t.color() * Vec3::dot(norm.normalized(), (light_source - intersection_point).normalized());
                 }
             }
-            if (intersection_point == point) {
-                return {point, {255, 255, 255}};
-            }
-            return {intersection_point,
-                    tetrahedron.color() * Vec3::dot((light_source - intersection_point).normalized(), n.normalized())};
+            return {intersection_point, intersection_color};
         }
         throw "Invalid figure type";
     }
