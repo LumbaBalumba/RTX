@@ -5,11 +5,17 @@
 #include <array>
 #include <SFML/Graphics.hpp>
 #include <limits>
+#include <omp.h>
 
-enum {
-    DEFAULT_PICTURE_WIDTH = 800,
-    DEFAULT_PICTURE_HEIGHT = 600
-};
+/*
+Аргументы запуска программы - файл с описанием 3D-пространства, файл с описанием фигур, название выходного файла.
+Ввод в первом файле осуществляется так же, как описано в ТЗ, за исключением того, что не требуется вводназвания параметров.
+Во втором файле вводятся фигуры по следующему формату:
+    1) первым вводится вид фигуры
+    2) затем вводятся параметры формы (для сферы - центр и радиус, для параллелепипеда - точка и три стороны, для тетраэдра - четыре точки)
+    3) последним вводится цвет фигуры, три числа, каждое от 0 до 255
+ */
+
 
 struct Vec3 {
     double x;
@@ -38,7 +44,7 @@ struct Vec3 {
     }
 
     friend Vec3 operator*(Vec3 left, Vec3 right) {
-        return {std::max(left.x * right.x, 0.0), std::max(left.y * right.y, 0.0), std::max(left.z * right.z, 0.0)};
+        return {left.x * right.x, left.y * right.y, left.z * right.z};
     }
 
     Vec3 operator-() const {
@@ -53,7 +59,7 @@ struct Vec3 {
         return {left.x / right.x, left.y / right.y, left.z / right.z};
     }
 
-    friend std::istream &operator>>(std::istream &in, Vec3 v) {
+    friend std::istream &operator>>(std::istream &in, Vec3 &v) {
         return in >> v.x >> v.y >> v.z;
     }
 
@@ -127,7 +133,7 @@ struct Color {
         return {left.r / right.r, left.g / right.g, left.b / right.b};
     }
 
-    friend std::istream &operator>>(std::istream &in, Color v) {
+    friend std::istream &operator>>(std::istream &in, Color &v) {
         return in >> v.r >> v.g >> v.b;
     }
 
@@ -252,12 +258,27 @@ struct Ray {
             }
 
             if (tmax >= tmin && tmax >= 0) {
-                Point intersectionPoint = {
+                Point intersection_point = {
                         point.x + tmin * direction.x,
                         point.y + tmin * direction.y,
                         point.z + tmin * direction.z
                 };
-                return {intersectionPoint, b.color()};
+                Vec3 normal{};
+                if (std::abs(intersection_point.x - b.point.x) < 1e-6) {
+                    normal = {-1, 0, 0};
+                } else if (std::abs(intersection_point.x - b.point.x - b.a) < 1e-6) {
+                    normal = {1, 0, 0};
+                } else if (std::abs(intersection_point.y - b.point.y) < 1e-6) {
+                    normal = {0, -1, 0};
+                } else if (std::abs(intersection_point.y - b.point.y - b.b) < 1e-6) {
+                    normal = {0, 1, 0};
+                } else if (std::abs(intersection_point.z - b.point.z) < 1e-6) {
+                    normal = {0, 0, -1};
+                } else if (std::abs(intersection_point.z - b.point.z - b.c) < 1e-6) {
+                    normal = {0, 0, 1};
+                }
+                return {intersection_point,
+                        b.color() * Vec3::dot(normal, (light_source - intersection_point).normalized())};
             }
             return {point, {255, 255, 255}};
         }
@@ -313,18 +334,10 @@ struct Image {
     sf::VertexArray matrix;
 
     Image(int height, int width) : height(height), width(width), matrix({}) {
-        for (int i = 0; i < height; ++i) {
-            for (int j = 0; j < width; ++j) {
-                sf::Vertex v{};
-                v.position = {(float) i, (float) j};
-                v.color = sf::Color::White;
-                matrix.append(v);
-            }
-        }
     }
 
     sf::Vertex &operator[](size_t i, size_t j) {
-        return matrix[i * width + j];
+        return matrix[i + j * width];
     }
 };
 
@@ -346,6 +359,7 @@ int main(int argc, char **argv) {
         in >> camera >> norm >> up >> a0 >> a1 >> alpha >> width >> height >> light_source;
         norm = norm.normalized();
         up = up.normalized();
+        alpha = alpha / 180 * M_PI;
     }
     std::vector<Figure *> figures;
     {
@@ -374,7 +388,6 @@ int main(int argc, char **argv) {
             }
         }
     }
-    sf::RenderWindow window(sf::VideoMode(width, height), "Rendered picture");
     Image image{height, width};
     double pixel_size = a0 * tan(alpha / 2) * 2 / height;
     double actual_height = height * pixel_size;
@@ -383,29 +396,36 @@ int main(int argc, char **argv) {
     Vec3 tmp = Vec3::cross(norm, up).normalized();
     up = -up;
     start_point = start_point - up * actual_height / 2 - tmp * actual_width / 2;
-    for (int i = 0; i < height; ++i) {
-        for (int j = 0; j < width; ++j) {
-            Point current_point = start_point + Vec3(pixel_size / 2) + tmp * pixel_size * j + up * pixel_size * i;
+    for (int i = 0; i < width; ++i) {
+        for (int j = 0; j < height; ++j) {
+            Point current_point = start_point + Vec3(pixel_size / 2) + tmp * pixel_size * i + up * pixel_size * j;
             Ray r{camera, (current_point - camera).normalized()};
             Point image_point = camera;
             Color pixel_color{255, 255, 255};
-            for (auto &elem: figures) {
-                auto p = r.intersect(elem, light_source);
-                if (p.first == camera || Vec3::distance(camera, p.first) < a0 ||
-                    Vec3::distance(camera, p.first) > a0 + a1) {
-                    continue;
-                }
-                if (image_point == camera) {
-                    image_point = p.first;
-                    pixel_color = p.second;
-                } else if (Vec3::distance(image_point, camera) > Vec3::distance(p.first, camera)) {
-                    image_point = p.first;
-                    pixel_color = p.second;
+#pragma omp parallel
+            {
+#pragma omp for
+                for (auto &elem: figures) {
+                    auto p = r.intersect(elem, light_source);
+                    if (p.first == camera || Vec3::distance(camera, p.first) < a0 ||
+                        Vec3::distance(camera, p.first) > a0 + a1) {
+                        continue;
+                    }
+#pragma omp atomic
+                    if (image_point == camera ||
+                        Vec3::distance(image_point, camera) > Vec3::distance(p.first, camera)) {
+                        image_point = p.first;
+                        pixel_color = p.second;
+                    }
                 }
             }
-            image[i, j].color = sf::Color(pixel_color.r, pixel_color.g, pixel_color.b);
+            sf::Vertex v{};
+            v.color = sf::Color(pixel_color.r, pixel_color.g, pixel_color.b);
+            v.position = {(float) i, (float) j};
+            image.matrix.append(v);
         }
     }
+    sf::RenderWindow window(sf::VideoMode(width, height), "Rendered picture");
     while (window.isOpen()) {
         sf::Event event{};
         while (window.pollEvent(event)) {
@@ -415,9 +435,11 @@ int main(int argc, char **argv) {
         }
         window.draw(image.matrix);
         window.display();
-        sf::Image().saveToFile("out.bmp");
-        sf::sleep(sf::seconds(3));
+        window.capture().saveToFile(argv[3]);
+        sf::sleep(sf::seconds(1));
     }
-    // save window to image
+    for (auto &elem: figures) {
+        delete elem;
+    }
     return 0;
 }
