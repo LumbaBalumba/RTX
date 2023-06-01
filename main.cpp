@@ -402,21 +402,15 @@ int main(int argc, char **argv) {
             Ray r{camera, (current_point - camera).normalized()};
             Point image_point = camera;
             Color pixel_color{255, 255, 255};
-#pragma omp parallel
-            {
-#pragma omp for
-                for (auto &elem: figures) {
-                    auto p = r.intersect(elem, light_source);
-                    if (p.first == camera || Vec3::distance(camera, p.first) < a0 ||
-                        Vec3::distance(camera, p.first) > a0 + a1) {
-                        continue;
-                    }
-#pragma omp atomic
-                    if (image_point == camera ||
-                        Vec3::distance(image_point, camera) > Vec3::distance(p.first, camera)) {
-                        image_point = p.first;
-                        pixel_color = p.second;
-                    }
+            for (auto &elem: figures) {
+                auto p = r.intersect(elem, light_source);
+                if (p.first == camera || Vec3::distance(camera, p.first) < a0 ||
+                    Vec3::distance(camera, p.first) > a0 + a1) {
+                    continue;
+                }
+                if (image_point == camera || Vec3::distance(image_point, camera) > Vec3::distance(p.first, camera)) {
+                    image_point = p.first;
+                    pixel_color = p.second;
                 }
             }
             sf::Vertex v{};
