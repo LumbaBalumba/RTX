@@ -1,8 +1,5 @@
-#include <cmath>
 #include <iostream>
 #include <fstream>
-#include <vector>
-#include <array>
 #include <SFML/Graphics.hpp>
 
 #include "Vec3.h"
