@@ -7,7 +7,7 @@ find_package(SFML 2.5
         COMPONENTS
         system window graphics REQUIRED)
 find_package(OpenMP)
-add_executable(RTX main.cpp)
+add_executable(RTX main.cpp Vec3.h Vec3.cpp Color.h Color.cpp Figure.h Figure.cpp Sphere.h Sphere.cpp Box.h Box.cpp Tetra.h Tetra.cpp Ray.h Ray.cpp Image.h Image.cpp)
 find_package(OpenMP)
 if (OPENMP_FOUND)
     set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
