@@ -52,7 +52,7 @@ int main(int argc, char **argv) {
         std::string figure_type;
         std::ifstream in(figures_file);
         if (!in.is_open()) {
-            throw "Could not find open file";
+            throw "Could not open figures file";
         }
         while (in >> figure_type) {
             if (figure_type == "sphere") {
@@ -73,7 +73,7 @@ int main(int argc, char **argv) {
                 in >> a >> b >> c >> d >> color;
                 figures.push_back(new Tetra(color, a, b, c, d));
             } else {
-                throw "incorrect figure type";
+                throw "Incorrect figure type";
             }
         }
     }
