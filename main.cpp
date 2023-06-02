@@ -1,5 +1,6 @@
 #include <iostream>
 #include <fstream>
+#include <vector>
 #include <SFML/Graphics.hpp>
 
 #include "Vec3.h"
